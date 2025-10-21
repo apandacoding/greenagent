@@ -1,0 +1,26 @@
+# Python virtual environment
+venv/
+env/
+ENV/
+
+# Cache
+cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+pandasai.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
