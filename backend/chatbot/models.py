@@ -10,6 +10,8 @@ class AgentType(str, Enum):
     USER = "user"
     WHITE_AGENT = "white_agent"
     GREEN_AGENT = "green_agent"
+    SUPERVISOR = "supervisor"
+    TOOL = "tool"
 
 class MessageType(str, Enum):
     TEXT = "text"

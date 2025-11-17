@@ -32,7 +32,7 @@ def weather_tool(query: Dict[str, Any]) -> Dict[str, Any]:
 
     today = datetime.now()
 
-    # ---------- Geocoding ----------
+ 
     def geocode(place: str):
         g_url = "https://geocoding-api.open-meteo.com/v1/search"
         r = requests.get(g_url, params={"name": place, "count": 1, "language": "en", "format": "json"}, timeout=10)
@@ -152,7 +152,7 @@ weather_schema = {
 }
 
 
-# ---------- 3️⃣ Agent ----------
+
 def weather_agent(user_prompt: str) -> Dict[str, Any]:
     system_prompt = (
         "You are a weather assistant that retrieves forecasts and historical data using open-source APIs. "

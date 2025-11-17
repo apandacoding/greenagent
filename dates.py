@@ -145,7 +145,7 @@ calendar_schema = {
 
 
 # ---------- 3️⃣ Agent (Direct Execution, No Follow-Up) ----------
-def calendar_agent(user_prompt: str) -> Dict[str, Any]:
+def dates_tool(user_prompt: str) -> Dict[str, Any]:
     """
     Claude → CalendarTool → direct JSON output.
     """

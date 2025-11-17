@@ -86,21 +86,9 @@ export default function ChatContainer() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    <div className="flex h-full bg-gray-50">
       {/* Main Chat Area */}
       <div className={`flex flex-col flex-1 transition-all duration-300 ${panelOpen ? 'mr-0' : ''}`}>
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">🌱</span>
-          <h1 className="text-xl font-semibold text-gray-900">GreenAgent</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-600 bg-blue-50 px-3 py-1 rounded-full">
-            Demo Mode
-          </span>
-        </div>
-      </header>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4">

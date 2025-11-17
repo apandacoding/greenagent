@@ -4,6 +4,11 @@ Configuration settings for the Green Agent chatbot.
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings
+from dotenv import load_dotenv
+
+# Load .env file from the chatbot directory
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(env_path)
 
 class Settings(BaseSettings):
     # API Keys
@@ -11,18 +16,18 @@ class Settings(BaseSettings):
     serp_api_key: str = os.getenv("SERP_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     
-    # Base URLs
+   
     base_url: str = os.getenv("BASE_URL", "https://serpapi.com/search")
     
-    # Model configurations
-    anthropic_model: str = "claude-3-5-sonnet-20241022"
-    openai_model: str = "gpt-4"
     
-    # Agent settings
+    anthropic_model: str = "claude-sonnet-4-5"
+    openai_model: str = "gpt-5-nano"
+    
+    
     max_conversation_length: int = 50
     response_timeout: int = 30
     
-    # Logging
+    
     log_level: str = "INFO"
     
     class Config:

@@ -4,7 +4,9 @@ from typing import Dict, Any
 from dotenv import load_dotenv
 
 load_dotenv()
-anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY="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"
+
+anthropic_api_key = ANTHROPIC_API_KEY
 
 # --- Define the HotelTool ---
 
@@ -80,14 +82,26 @@ def hotel_booking_tool(user_prompt: str) -> Dict[str, Any]:
 
     # 4️⃣ Parse structured tool call output
     tool_block = response.content[0]
-    hotel_data = tool_block.input  # <-- structured JSON output
+    hotel_data = tool_block.input 
+    
+    # add tool call that was outputted by the user
+    tool_call = {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_call",
+                "tool_call_id": tool_block.name,
+            }
+        ]
+    }
+
+    # append tool call to the hotel data
+    hotel_data["tool_call"] = tool_call
 
     return hotel_data
 
-
-# --- Example usage ---
+# example run
 if __name__ == "__main__":
-    user_prompt = "Find me a pet-friendly hotel in New York City from November 10th to November 13th for 2 guests under $200/night."
-    result = hotel_booking_tool(user_prompt)
-    print("\n🧳 Hotel search result:\n")
-    print(result)
+    user_prompt = "Find me a hotel in Los Angeles for tomorrow"
+    hotel_data = hotel_booking_tool(user_prompt)
+    print(hotel_data)

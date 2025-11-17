@@ -9,9 +9,9 @@ import requests
 import pandas as pd
 from langchain_core.runnables import RunnableLambda, RunnableSequence
 import dotenv
-from pandasai.llm import OpenAI
-from pandasai import SmartDataframe
-
+from langchain_experimental.tools import PythonAstREPLTool
+from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
+from langchain_anthropic import ChatAnthropic
 dotenv.load_dotenv()
 
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -19,11 +19,15 @@ serp_api_key = os.getenv("SERP_API_KEY")
 BASE_URL = os.getenv("BASE_URL")
 
 
-with open('./functions/serp_params_one_way.json', 'r') as f:
-    serp_params_round_trip = json.load(f)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Go up one level from backend/tools/ to backend/, then into functions/
+functions_dir = os.path.join(os.path.dirname(BASE_DIR), "functions")
 
-with open('./functions/serp_params_one_way.json', 'r') as f:
+with open(os.path.join(functions_dir, "serp_params_one_way.json"), "r") as f:
     serp_params_one_way = json.load(f)
+
+with open(os.path.join(functions_dir, "serp_params_round_trip.json"), "r") as f:
+    serp_params_round_trip = json.load(f)
 
 
 iata_schema = {
@@ -37,6 +41,12 @@ iata_schema = {
 
 def transform_df(df):
     df = df.copy()
+    
+    # Check if required columns exist before processing
+    required_cols = ["depart_time", "arrive_time"]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns in flight data: {missing_cols}. Available columns: {list(df.columns)}")
 
     # ensure datetimes
     df["depart_time"] = pd.to_datetime(df["depart_time"])
@@ -247,14 +257,14 @@ def get_flight_api_params(iata_result: dict):
             "input_schema": serp_params_one_way,
         },
         ],
-        tool_choice={"type": "tool", "name": "get_flight_api_params_round_trip"},
+        tool_choice={"type": "auto"},
         messages=[{"role": "user", "content": prompt_text}],
     )
 
     # Extract structured params
     tool_block = response.content[0]
     params = tool_block.input  # final Google Flights params dict
-    params['api_key'] = '4a871fe30bb1fed4dc0850f01d384a2fff2dee8a74046b902109785f1a9bd730'
+    params['api_key'] = serp_api_key
 
     return params
 
@@ -270,33 +280,134 @@ def flight_tool(user_prompt: str):
     iata_chain = RunnableLambda(anthropic_IATA_call)
     flight_chain = RunnableLambda(get_flight_api_params)
     pipeline = iata_chain | flight_chain
-    result = pipeline.invoke(user_prompt)
+    print("user prompt", user_prompt)
+    
+    try:
+        result = pipeline.invoke(user_prompt)
+    except Exception as e:
+        error_msg = f"Error extracting flight parameters: {str(e)}. The user query may be missing required information (origin, destination, or departure date)."
+        logger.error(f"Flight params extraction error: {e}")
+        return error_msg
 
     # make a flight booking
     params = result
     params['api_key'] = serp_api_key
     url = "https://serpapi.com/search"
-    response = requests.get(url, params=params)
-    data = response.json()
-    return sanitize_for_pandasai(data_to_df(data, params))
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()  # Raises HTTPError for bad status codes
+        
+    except requests.exceptions.HTTPError as e:
+        # API returned error status (400, 404, etc.)
+        status_code = response.status_code if hasattr(response, 'status_code') else 'unknown'
+        error_detail = ""
+        try:
+            error_data = response.json()
+            error_detail = error_data.get('error', '')
+        except:
+            error_detail = str(e)
+        
+        # Create structured error message for LLM
+        missing_params = []
+        if 'departure_id' not in params or not params.get('departure_id'):
+            missing_params.append("departure airport (origin)")
+        if 'arrival_id' not in params or not params.get('arrival_id'):
+            missing_params.append("arrival airport (destination)")
+        if 'outbound_date' not in params or not params.get('outbound_date'):
+            missing_params.append("departure date")
+        
+        error_msg = (
+            f"Error fetching flights from API (status {status_code}). "
+            f"API Error: {error_detail}. "
+            f"Missing required parameters: {', '.join(missing_params) if missing_params else 'unknown'}. "
+            f"Please provide complete flight information including origin, destination, and departure date."
+        )
+        logger.error(f"SerpAPI error: {status_code} - {error_detail}")
+        logger.error(f"Params sent: {params}")
+        return error_msg
+        
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Network error connecting to flight API: {str(e)}"
+        logger.error(f"Flight API network error: {e}")
+        return error_msg
+
+    # Check if response has valid flight data
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_msg = f"Invalid response from flight API: {str(e)}"
+        logger.error(f"JSON decode error: {e}")
+        return error_msg
+    
+    # Validate that we have flight data
+    if not data or not _get_all_outbounds(data):
+        error_msg = (
+            "No flight data returned from API. "
+            "This may indicate missing or invalid search parameters. "
+            "Please ensure you have provided: origin airport, destination airport, and departure date."
+        )
+        logger.warning(f"No flight data in response. Params: {params}")
+        return error_msg
+
+    # Process flight data
+    try:
+        df = data_to_df(data, params)
+        return chat_node(sanitize_for_pandasai(df), user_prompt)
+    except (KeyError, ValueError) as e:
+        # Handle missing columns/data structure issues
+        error_msg = (
+            f"Error processing flight data: {str(e)}. "
+            "The API response may be missing required flight information. "
+            "Please try again with complete flight details (origin, destination, departure date)."
+        )
+        logger.error(f"Flight data processing error: {e}")
+        return error_msg
+    except Exception as e:
+        error_msg = f"Unexpected error processing flights: {str(e)}"
+        logger.error(f"Unexpected error in flight_tool: {e}", exc_info=True)
+        return error_msg
 
 
 
 def chat_node(df, prompt):
-    
-    llm = OpenAI(api_token="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", model="gpt-4")
+    agent = create_pandas_dataframe_agent(
+        llm=ChatAnthropic(model="claude-sonnet-4-5"),
+        df=df,
+        verbose=True,
+        allow_dangerous_code=True,
+    )
 
-    # Wrap your DataFrame
-    sdf = SmartDataframe(df, config={"llm": llm})
-
-    # Ask natural language questions
-    response = sdf.chat(prompt)
-    return response
+    response = agent.invoke(prompt)['output']
 
 
-if __name__ == "__main__":
-    user_prompt = "Book me a round trip flight from Oakland to Newark on outbound_date of 11/7/2025 this year returning on 11/14/2025"
-    data = flight_tool(user_prompt)
-    print(data)
-    response = chat_node(data, "What is the total price of the flight?")
-    print(response)
+
+    def to_json(df):
+        return json.loads(df.to_json(orient="records"))
+
+
+    client = anthropic.Anthropic(api_key=anthropic_api_key)
+    system_prompt = (
+        "You are a strict JSON Analyzer and Data Analyzer. "
+        "When you receive a piece of data and a user's query, you must analyze the data and describe meaningful insights, findings, and trends back to the user in natural language as a direct answer to their query."
+        " Your response should help the user understand the data and answer their question clearly and thoroughly."
+        " Do not return uninterpreted code, do not return a DataFrame object, do not respond with raw unprocessed JSON, and do not output summaries unless they directly answer the user's specific question."
+        " The user's query is: {prompt}"
+    )
+
+
+
+
+
+    if type(response) != str:
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            system=system_prompt,
+            messages=[{"role": "assistant", "content": json.dumps(to_json(response))}],
+            max_tokens=1024
+        )
+        return response.content[0].text
+    else:
+        return response
+
+

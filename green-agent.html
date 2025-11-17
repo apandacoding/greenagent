@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Green Agent - Lume</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="green-agent-page">
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="logo">
+                <div class="diamond-icon"></div>
+                <span>Lume</span>
+            </div>
+            <nav class="nav">
+                <a href="index.html">Home</a>
+                <a href="#pricing">Pricing</a>
+                <a href="#blog">Blog</a>
+            </nav>
+            <div class="header-actions">
+                <button class="theme-toggle">☀️</button>
+                <button class="cta-button">Book a demo</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="green-agent-main">
+        <div class="container">
+            <!-- Agent Status Header -->
+            <div class="agent-status-header">
+                <div class="agent-info">
+                    <h1>Green Agent</h1>
+                    <div class="status-indicator">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Active</span>
+                    </div>
+                </div>
+                <div class="agent-controls">
+                    <button class="control-btn">Settings</button>
+                    <button class="control-btn">Clear Chat</button>
+                </div>
+            </div>
+
+            <!-- Agent Types Display -->
+            <div class="agent-types">
+                <div class="agent-type user-agent">
+                    <div class="agent-icon">👤</div>
+                    <h3>User Agent</h3>
+                    <p>Provides trip ideas and prompts</p>
+                </div>
+                <div class="agent-type white-agent">
+                    <div class="agent-icon">🤖</div>
+                    <h3>White Agent</h3>
+                    <p>Reasons and responds to prompts</p>
+                </div>
+                <div class="agent-type green-agent">
+                    <div class="agent-icon">🌱</div>
+                    <h3>Green Agent</h3>
+                    <p>Evaluates reasoning and tool calls</p>
+                </div>
+            </div>
+
+            <!-- Chat Interface -->
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Messages will be dynamically added here -->
+                </div>
+                
+                <div class="chat-input-container">
+                    <div class="input-wrapper">
+                        <textarea 
+                            id="messageInput" 
+                            placeholder="Enter your trip idea or prompt..."
+                            rows="3"
+                        ></textarea>
+                        <button id="sendButton" class="send-button">
+                            <span>Send</span>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                                <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent Activity Panel -->
+            <div class="agent-activity-panel">
+                <h3>Agent Activity</h3>
+                <div class="activity-feed" id="activityFeed">
+                    <div class="activity-item">
+                        <div class="activity-icon user"></div>
+                        <div class="activity-content">
+                            <span class="activity-type">User Input</span>
+                            <span class="activity-time">Just now</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tool Outputs Panel -->
+            <div class="tool-outputs-panel">
+                <h3>Tool Outputs</h3>
+                <div class="tool-outputs" id="toolOutputs">
+                    <div class="tool-output">
+                        <div class="tool-name">No active tools</div>
+                        <div class="tool-result">Waiting for agent interaction...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="green-agent.js"></script>
+</body>
+</html>
