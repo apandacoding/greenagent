@@ -12,6 +12,10 @@ import dotenv
 from langchain_experimental.tools import PythonAstREPLTool
 from langchain_experimental.agents.agent_toolkits import create_pandas_dataframe_agent
 from langchain_anthropic import ChatAnthropic
+import logging
+
+logger = logging.getLogger(__name__)
+
 dotenv.load_dotenv()
 
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -39,7 +43,7 @@ iata_schema = {
     }
 }
 
-def transform_df(df):
+def transform_df(df, is_one_way=False):
     df = df.copy()
     
     # Check if required columns exist before processing
@@ -52,6 +56,43 @@ def transform_df(df):
     df["depart_time"] = pd.to_datetime(df["depart_time"])
     df["arrive_time"] = pd.to_datetime(df["arrive_time"])
 
+    # For one-way flights, just return the outbound data in a simplified format
+    if is_one_way:
+        out = df[df["direction"] == "outbound"].copy()
+        out = out.rename(columns={
+            "from": "from_out",
+            "to": "to_out",
+            "depart_time": "depart_time_out",
+            "arrive_time": "arrive_time_out",
+            "duration_min": "duration_min_out",
+            "layovers": "layovers_out",
+            "price": "total_price",
+        })
+        
+        # Add empty return columns for consistency
+        out["from_ret"] = None
+        out["to_ret"] = None
+        out["depart_time_ret"] = None
+        out["arrive_time_ret"] = None
+        out["duration_min_ret"] = None
+        out["layovers_ret"] = None
+        
+        out.insert(0, "pair_id", range(1, len(out) + 1))
+        
+        df = out[[
+            "pair_id",
+            "total_price",
+            "airline",
+            "from_out", "to_out",
+            "depart_time_out", "arrive_time_out", "duration_min_out", "layovers_out",
+            "from_ret", "to_ret",
+            "depart_time_ret", "arrive_time_ret", "duration_min_ret", "layovers_ret",
+            "outbound_idx",
+        ]].sort_values(["depart_time_out", "pair_id"]).reset_index(drop=True)
+        
+        return df
+
+    # Original round-trip logic
     # split
     out = df[df["direction"] == "outbound"].copy()
     ret = df[df["direction"] == "return"].copy()
@@ -163,6 +204,9 @@ def _get_all_outbounds(data):
     return all_outbounds
 
 def data_to_df(data, params):
+    # Check if this is a one-way flight (type: 2) or round-trip (type: 1 or missing)
+    is_one_way = params.get('type') == 2
+    
     # ---------- 1) collect ALL outbounds & flatten them ----------
     outbound_flights = _get_all_outbounds(data)
     outbound_rows = []
@@ -170,36 +214,39 @@ def data_to_df(data, params):
         outbound_rows += flatten_direction([f], "outbound", outbound_idx=i, outbound_airline=f["flights"][0]["airline"])
 
     return_rows = []
-    for i, f in enumerate(outbound_flights):
-        token = f.get("departure_token")
-        if not token:
-            continue  # some entries might not have a token
+    
+    # Only fetch return flights for round-trip flights
+    if not is_one_way:
+        for i, f in enumerate(outbound_flights):
+            token = f.get("departure_token")
+            if not token:
+                continue  # some entries might not have a token
 
-        # Build params fresh each time; don't mutate a shared dict
-        params["departure_token"] = token
-        params["api_key"] = serp_api_key
-        
-        r = requests.get(BASE_URL, params=params, timeout=30)
-        if r.status_code != 200:
-            print(f"⚠️ Failed return fetch for outbound #{i} ({r.status_code})")
-            continue
+            # Build params fresh each time; don't mutate a shared dict
+            params["departure_token"] = token
+            params["api_key"] = serp_api_key
+            
+            r = requests.get(BASE_URL, params=params, timeout=30)
+            if r.status_code != 200:
+                print(f"⚠️ Failed return fetch for outbound #{i} ({r.status_code})")
+                continue
 
-        jr = r.json()
+            jr = r.json()
 
-        # SerpAPI can place the return options in various buckets; try them in order.
-        ret_list = (
-            jr.get("return_flights")
-            or jr.get("best_flights")
-            or jr.get("other_flights")
-            or []
-        )
+            # SerpAPI can place the return options in various buckets; try them in order.
+            ret_list = (
+                jr.get("return_flights")
+                or jr.get("best_flights")
+                or jr.get("other_flights")
+                or []
+            )
 
-        # Flatten as "return" and keep the linkage to the originating outbound
-        return_rows += flatten_direction(
-            ret_list, "return", outbound_idx=i, outbound_airline=f["flights"][0]["airline"]
-        )
+            # Flatten as "return" and keep the linkage to the originating outbound
+            return_rows += flatten_direction(
+                ret_list, "return", outbound_idx=i, outbound_airline=f["flights"][0]["airline"]
+            )
 
-        time.sleep(1)  # polite rate limiting
+            time.sleep(1)  # polite rate limiting
 
     # ---------- 3) combine, de-dupe, and sort ----------
     df = pd.DataFrame(outbound_rows + return_rows)
@@ -211,7 +258,7 @@ def data_to_df(data, params):
               .reset_index(drop=True)
         )
     
-    return transform_df(df)
+    return transform_df(df, is_one_way=is_one_way)
 
 
 def anthropic_IATA_call(iata_result: str):
@@ -229,18 +276,32 @@ def anthropic_IATA_call(iata_result: str):
         messages=[{"role": "user", "content": f"Cities mapped: {iata_result}"}], 
         max_tokens=1024
     )
-    iata_codes = response.content[0].input 
+    
+    if not response.content:
+        raise ValueError("Empty response from Anthropic API")
+    
+    first_block = response.content[0]
+    if first_block.type != "tool_use":
+        error_text = first_block.text if hasattr(first_block, 'text') else str(first_block)
+        raise ValueError(f"Expected tool use but got {first_block.type}: {error_text}")
+    
+    iata_codes = first_block.input 
     return iata_codes
 
 def get_flight_api_params(iata_result: dict):
     client = anthropic.Anthropic(api_key=anthropic_api_key)
 
     # build a new structured prompt using the IATA result
+    original_prompt = iata_result.get('original_prompt', '')
     prompt_text = (
-        f"User Original Request: {iata_result.get('original_prompt')}"
-        f"Departure: {iata_result.get('from')} | "
-        f"Arrival: {iata_result.get('destination')} | "
-        f"Original user request included these IATA codes."
+        f"User's complete original request: {original_prompt}\n\n"
+        f"Extracted IATA codes:\n"
+        f"- Departure: {iata_result.get('from')}\n"
+        f"- Arrival: {iata_result.get('destination')}\n\n"
+        f"CRITICAL: Determine the flight type from the user's request above.\n"
+        f"- ONE-WAY: If user says 'one-way', 'one way', 'single', or does NOT mention a return date (default choice unless a return date is explicitly mentioned)\n"
+        f"- ROUND-TRIP: ONLY if user explicitly says 'round-trip', 'round trip', 'return flight', or provides BOTH departure AND return dates\n"
+        f"Default to ONE-WAY unless round-trip is explicitly mentioned."
     )
 
     response = client.messages.create(
@@ -248,12 +309,12 @@ def get_flight_api_params(iata_result: dict):
         max_tokens=1024,
         tools=[{
             "name": "get_flight_api_params_round_trip",
-            "description": "Follow the tool call schema to fill out the api params for google flights for round trip flights (if user asks for round trip flights or mentions a return date)",
+            "description": "ONLY use for round trip flights. Use this ONLY if the user explicitly says 'round-trip', 'round trip', 'return flight', or provides BOTH an outbound date AND a return date. DO NOT use this for one-way flights.",
             "input_schema": serp_params_round_trip,
         },
         {
             "name": "get_flight_api_params_one_way",
-            "description": "Follow the tool call schema to fill out the api params for google flights for one way flights",
+            "description": "Use for one-way flights. Use this if: (1) user explicitly says 'one-way' or 'one way', OR (2) user only provides a departure date with no return date mentioned. This is the DEFAULT choice unless round-trip is explicitly requested.",
             "input_schema": serp_params_one_way,
         },
         ],
@@ -262,8 +323,20 @@ def get_flight_api_params(iata_result: dict):
     )
 
     # Extract structured params
-    tool_block = response.content[0]
-    params = tool_block.input  # final Google Flights params dict
+    if not response.content:
+        raise ValueError("Empty response from Anthropic API when extracting flight params")
+    
+    first_block = response.content[0]
+    if first_block.type != "tool_use":
+        error_text = first_block.text if hasattr(first_block, 'text') else str(first_block)
+        raise ValueError(f"Expected tool use but got {first_block.type}: {error_text}. The LLM did not call a flight params tool.")
+    
+    # Log which tool was called for debugging
+    tool_name = first_block.name if hasattr(first_block, 'name') else 'unknown'
+    logger.info(f"LLM selected tool: {tool_name}")
+    print(f"🔧 LLM selected tool: {tool_name}", flush=True)
+    
+    params = first_block.input  # final Google Flights params dict
     params['api_key'] = serp_api_key
 
     return params

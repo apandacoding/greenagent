@@ -23,6 +23,7 @@
       "currency": { "type": "string", "enum": ["USD"] },
       "hl": { "type": "string", "enum": ["en"] },
       "gl": { "type": "string", "enum": ["us"] },
+      "type": {"type": "number", "enum": [2]}, 
       "api_key": { "type": "string", "description": "The API key for the Google Flights API", "enum": ["4a871fe30bb1fed4dc0850f01d384a2fff2dee8a74046b902109785f1a9bd730"]}
     },
     "required": [
@@ -33,6 +34,7 @@
       "currency",
       "hl",
       "gl",
+      "type",
       "api_key"
     ],
     "additionalProperties": false

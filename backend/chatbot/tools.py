@@ -7,6 +7,9 @@ from typing import Dict, Any, List
 import sys
 import os
 import pandas as pd
+from pydantic import Field
+# import logger from lo
+import logging
 
 # Add parent directory to path for imports
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,13 +29,28 @@ class FlightSearchTool(BaseTool):
     def set_context(self, context):
         self.context = context or []
 
+    def clear_context(self):
+        """Clear conversation context for new turn"""
+        self.context = []
+
     def _run(self, query: str) -> str:
         try:
             print("✈️ Running FlightSearchTool:", query, flush=True)
 
-            # Combine query + context for interpretability
-            context_text = "\n".join([m["content"] for m in self.context if m["role"] == "user"])
-            full_prompt = f"{context_text}\n\n{query}".strip()
+            # Use only the current query, or combine with last user message if in same turn
+            # Context should already be filtered to current turn by agent
+            if self.context:
+                # Get last user message from context (should be current turn only)
+                user_messages = [m["content"] for m in self.context if m["role"] == "user"]
+                if user_messages:
+                    # Use the last user message + current query
+                    full_prompt = f"{user_messages[-1]}\n\n{query}".strip()
+                else:
+                    full_prompt = query
+            else:
+                # No context (fresh turn) - use query only
+                full_prompt = query
+            
             print("Full prompt:", full_prompt, flush=True)
 
             # Try to extract params, but don't die if helper isn't present

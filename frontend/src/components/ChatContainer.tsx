@@ -12,11 +12,12 @@ import type { Message } from '../types/chat';
 import type { PanelType } from '../types/evaluation';
 
 export default function ChatContainer() {
-  const [messages, setMessages] = useState<Message[]>(mockMessages);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelType, setPanelType] = useState<PanelType>(null);
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
+  const [evaluations, setEvaluations] = useState<any[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
@@ -24,8 +25,8 @@ export default function ChatContainer() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Handler for sending messages (currently just adds to display)
-  const handleSendMessage = (content: string) => {
+  // Handler for sending messages to Green Agent backend
+  const handleSendMessage = async (content: string) => {
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -33,19 +34,47 @@ export default function ChatContainer() {
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, userMessage]);
-    
-    // Simulate loading and auto-response
     setIsLoading(true);
-    setTimeout(() => {
+
+    try {
+      const response = await fetch('http://localhost:8001/api/chat/green', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: content }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Add assistant response
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'This is a demo environment showing hardcoded evaluation examples. Try scrolling up to see the full Green Agent demonstration!',
+        content: data.message || 'No response received',
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // If evaluation result is present, add it to evaluations list
+      if (data.evaluation_result) {
+        setEvaluations((prev) => [...prev, data.evaluation_result]);
+      }
+    } catch (err) {
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `Error: ${err instanceof Error ? err.message : 'Failed to get response from Green Agent'}`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   // Handler for opening panels
@@ -65,9 +94,10 @@ export default function ChatContainer() {
     }, 300);
   };
 
-  // Get current evaluation data
+  // Get current evaluation data - check both mockEvaluations (for demo) and real evaluations
   const currentEvaluation = selectedEvaluationId
-    ? mockEvaluations.find((e) => e.id === selectedEvaluationId)
+    ? mockEvaluations.find((e) => e.id === selectedEvaluationId) || 
+      evaluations.find((e) => e.id === selectedEvaluationId)
     : null;
 
   // Get panel title
@@ -97,7 +127,10 @@ export default function ChatContainer() {
             <div className="text-center text-gray-500 mt-20">
               <p className="text-lg mb-2">Welcome to GreenAgent! 🌱</p>
               <p className="text-sm">
-                Ask me about flights, hotels, or restaurants to get started.
+                I evaluate White Agent outputs across 4 criteria: Correctness, Helpfulness, Alignment, and Safety.
+              </p>
+              <p className="text-sm mt-2">
+                Try asking me to book a flight or ask any question to see the evaluation process in action.
               </p>
             </div>
           )}

@@ -378,6 +378,11 @@ from chatbot.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+
+# user prompts the agent -> serper api call (one-way, round-trip) (llm - TICKER Symbols (EWR, OAK), llm to tool call for oneway or round trip ->) # json calls -> api call (params) --> makes the api to serp -> data (flights) -> data (JSON) --> llm (user_prompt: "find the cheapest flight for a oneway trip) # 3 llm calls
+
+
 def get_hotel_api_params(user_prompt: str) -> Dict[str, Any]:
     """
     Extract hotel search parameters from natural language query.

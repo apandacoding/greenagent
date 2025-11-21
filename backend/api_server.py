@@ -31,7 +31,8 @@ app.add_middleware(
 
 # Initialize agents
 white_agent = WhiteAgent()
-green_agent = GreenAgent()
+# Green Agent uses the same WhiteAgent instance to avoid duplicate state
+green_agent = GreenAgent(white_agent=white_agent)
 
 
 class ChatRequest(BaseModel):
@@ -43,6 +44,7 @@ class ChatResponse(BaseModel):
     agent_type: str
     conversation_length: int
     error: str | None = None
+    evaluation_result: dict | None = None
 
 
 @app.get("/")
@@ -79,10 +81,10 @@ async def chat_white_agent(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/chat/green", response_model=ChatResponse)
+@app.post("/api/chat/green")
 async def chat_green_agent(request: ChatRequest):
     """
-    Chat endpoint for Green Agent (full demo)
+    Chat endpoint for Green Agent (evaluates White Agent outputs)
     """
     try:
         logger.info(f"Received message for Green Agent: {request.message}")
@@ -90,12 +92,19 @@ async def chat_green_agent(request: ChatRequest):
         # Process message through GreenAgent
         result = await green_agent.process_message(request.message)
         
-        return ChatResponse(
-            message=result.get("message", ""),
-            agent_type=result.get("agent_type", "green_agent"),
-            conversation_length=result.get("conversation_length", 0),
-            error=result.get("error")
-        )
+        # Build response with optional evaluation result
+        response_data = {
+            "message": result.get("message", ""),
+            "agent_type": result.get("agent_type", "green_agent"),
+            "conversation_length": result.get("conversation_length", 0),
+            "error": result.get("error")
+        }
+        
+        # Include evaluation result if available
+        if "evaluation_result" in result:
+            response_data["evaluation_result"] = result["evaluation_result"]
+        
+        return response_data
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         raise HTTPException(status_code=500, detail=str(e))
