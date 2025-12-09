@@ -8,7 +8,7 @@ import json
 
 # ---------- Load API Key ----------
 load_dotenv()
-ANTHROPIC_API_KEY = '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'
+ANTHROPIC_API_KEY = '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'
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 

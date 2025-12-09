@@ -4,7 +4,7 @@ export default function Navigation() {
   const location = useLocation();
 
   const navItems = [
-    { path: '/', label: 'Green Agent', icon: '🌱', description: 'Full Demo' },
+    { path: '/green-agent', label: 'Green Agent', icon: '🌿', description: 'Full Demo' },
     { path: '/white-agent', label: 'White Agent', icon: '⚪', description: 'Reasoning Engine' },
   ];
 

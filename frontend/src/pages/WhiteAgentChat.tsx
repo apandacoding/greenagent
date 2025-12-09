@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ChatInput from '../components/ChatInput';
 import LoadingDots from '../components/LoadingDots';
-import ReactMarkdown from 'react-markdown';
+import StructuredMessage from '../components/StructuredMessage';
 
 interface Message {
   id: string;
@@ -169,16 +169,16 @@ export default function WhiteAgentChat() {
             return (
               <div
                 key={message.id}
-                className={`flex w-full mb-6 animate-slide-up ${isUser ? 'justify-end' : 'justify-start'}`}
+                className={`flex w-full mb-8 animate-slide-up ${isUser ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] px-5 py-4 rounded-2xl shadow-sm transition-all hover:shadow-md ${
+                  className={`max-w-[90%] px-6 py-5 rounded-2xl shadow-sm transition-all hover:shadow-md ${
                     isUser
                       ? 'bg-user-light border border-user/20'
                       : 'bg-card border border-border'
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-2 mb-4">
                     <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${badge.color} flex items-center gap-1.5`}>
                       <span>{badge.emoji}</span>
                       <span>{badge.label}</span>
@@ -187,9 +187,13 @@ export default function WhiteAgentChat() {
                       {message.timestamp.toLocaleTimeString()}
                     </span>
                   </div>
-                  <div className={`prose prose-sm max-w-none ${isUser ? 'text-foreground' : 'text-card-foreground'}`}>
-                    <ReactMarkdown>{message.content}</ReactMarkdown>
-                  </div>
+                  {isUser ? (
+                    <div className={`prose prose-sm max-w-none text-foreground`}>
+                      <div className="text-gray-800 whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                    </div>
+                  ) : (
+                    <StructuredMessage content={message.content} isUser={false} />
+                  )}
                 </div>
               </div>
             );

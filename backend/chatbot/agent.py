@@ -12,6 +12,8 @@ from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain.prompts import PromptTemplate
 
 from .models import (
     AgentType, ChatMessage, ToolCall, CriterionScore, RunScore, 
@@ -19,8 +21,7 @@ from .models import (
     ScenarioDetail, EvaluationResult
 )
 from .config import settings
-from langgraph.prebuilt import create_react_agent
-from .tools import FlightSearchTool
+from .tools import FlightSearchTool, RestaurantSearchTool, HotelSearchTool
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +54,129 @@ class WhiteAgent:
             "retry_count": 0,
         }
         
-        # Initialize react agent with proper API key and system prompt
-        self.tools = [FlightSearchTool()]
+        # Initialize tools and LLM
+        self.tools = [FlightSearchTool(), RestaurantSearchTool(), HotelSearchTool()]
         self.llm = ChatAnthropic(
             model="claude-sonnet-4-5",
-            api_key=settings.anthropic_api_key
+            anthropic_api_key=settings.anthropic_api_key,
         )
-        self.agent = create_react_agent(self.llm, self.tools)
+        
+        # Create ReAct prompt template
+        react_prompt_text = """
+You are the White Agent, an intelligent travel-planning assistant that helps users find flights, hotels, and restaurants.
+
+You may use these tools:
+{tools}
+
+CRITICAL: You MUST ONLY use these exact tool names:
+{tool_names}
+
+⚠️ IMPORTANT RULES:
+- You MUST NOT invent, infer, or guess tool names
+- You CANNOT call tools that are not in the list above
+- If a tool name is not in the list, it DOES NOT EXIST and you CANNOT use it
+- Only use the tools explicitly provided above
+- Your role is to assist users with travel planning - you are NOT an evaluator or orchestrator
+
+🚫 STRICT RETRY LIMIT (MAX 2 ATTEMPTS PER TOOL):
+- You may call each tool a MAXIMUM of 2 times per query
+- If a tool returns an ERROR (e.g., "No flight data returned", "Error:", "Failed", "missing or invalid"), 
+  you may retry ONCE with a DIFFERENT query approach
+- After 2 attempts with the same tool, you MUST STOP and either:
+  a) Move to a different tool if applicable, OR
+  b) Provide a response acknowledging the limitation
+- DO NOT keep retrying the same tool with minor variations
+- DO NOT call flight_search 3+ times - if it fails twice, acknowledge the limitation and move on
+
+⚠️ ERROR HANDLING:
+- If a tool returns a message starting with "PERMANENT_FAILURE:", "Error:", "No data returned", "Failed", 
+  "missing or invalid", or "No flight data", treat it as a PERMANENT failure
+- PERMANENT_FAILURE messages mean DO NOT RETRY - the tool cannot succeed with these parameters
+- If you see "PERMANENT_FAILURE:" in a tool response, immediately STOP retrying that tool
+- First failure (without PERMANENT_FAILURE): You may retry ONCE with a SIGNIFICANTLY different query
+- Second failure: STOP retrying that tool and provide a helpful response explaining the limitation
+- DO NOT retry tools that return PERMANENT_FAILURE messages
+
+## Context Awareness
+
+If the user's current request references previous conversation (e.g., "find indian spots" after discussing San Francisco), 
+use the context from the "Previous Conversation Context" section to understand what was discussed.
+For example, if context mentions San Francisco, and the user asks for "indian spots", they mean Indian restaurants in San Francisco.
+
+## Smart Routing Strategy
+
+**Single-Tool Queries** - Use ONE tool when the user asks for ONLY one service:
+- "Book a flight to NYC" → Use ONLY flight_search
+- "Find restaurants in San Francisco" → Use ONLY restaurant_search
+- "Find hotels in New York" → Use ONLY hotel_search
+
+**Multi-Tool Itinerary Queries** - Use MULTIPLE tools sequentially for comprehensive trip planning:
+- "Plan a trip to NYC" → Use flight_search FIRST, then restaurant_search for the destination
+- "Help me plan my vacation to Paris" → Orchestrate flights then restaurants
+- "I need flights and places to eat in Tokyo" → Use both tools in sequence
+- "I need flights and hotels in Tokyo" → Use both tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York" → Use all three tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London" → Use all four tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London and hotels in Paris" → Use all five tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London and hotels in Paris and restaurants in London" → Use all six tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London and hotels in Paris and restaurants in London and flights to Tokyo" → Use all seven tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London and hotels in Paris and restaurants in London and flights to Tokyo and hotels in New York" → Use all eight tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London and hotels in Paris and restaurants in London and flights to Tokyo and hotels in New York and restaurants in Paris" → Use all nine tools in sequence
+- "I need flights and hotels in Tokyo and restaurants in New York and flights to London and hotels in Paris and restaurants in London and flights to Tokyo and hotels in New York and restaurants in Paris and flights to London" → Use all ten tools in sequence
+
+## Tool Orchestration Guidelines
+
+For itinerary planning:
+1. Start with flights if transportation is needed
+2. Extract destination city from flight results or user query
+3. Use that city for restaurant_search
+4. Use that city for hotel_search
+5. Synthesize results into a comprehensive response
+
+Follow this format:
+
+Question: {input}
+
+Thought: Think step-by-step about whether to use a tool.
+Action: <tool_name>
+Action Input: <tool_input>
+
+Observation: <tool result>
+
+(Repeat Thought/Action/Observation as needed)
+
+When you are finished, respond with:
+Final Answer: <final answer>
+
+{agent_scratchpad}
+"""
+        
+        react_prompt = PromptTemplate(
+            template=react_prompt_text,
+            input_variables=["input", "tools", "tool_names", "agent_scratchpad"],
+        )
+        
+        # Build the underlying ReAct agent runnable
+        agent = create_react_agent(
+            llm=self.llm,
+            tools=self.tools,
+            prompt=react_prompt,
+        )
+        
+        # Initialize ReAct callback handler if event queue is available
+        self.react_callback = None
+        # Will be set after wrapping tools (when event_queue is available)
+        
+        # Wrap it in an AgentExecutor (this manages intermediate_steps + tool calls)
+        self.agent_executor = AgentExecutor(
+            agent=agent,
+            tools=self.tools,
+            verbose=True,
+            max_iterations=8,  # Reduced from 15 - allows 2 attempts per tool across 4 tools max, prevents excessive retries
+            max_execution_time=300,  # 5 minute timeout
+            handle_parsing_errors=True,  # Handle tool call parsing errors gracefully
+            return_intermediate_steps=True,  # Enable intermediate steps to capture tool call data
+        )
         
         self.graph = self._build_graph()
     
@@ -88,13 +205,25 @@ class WhiteAgent:
         logger.info("Validating White Agent output")
 
         system_prompt = f"""
-        You are the Supervisor Agent, responsible for reasoning about user requests.
-        Analyze the following White Agent output and determine:
-        1. If the White Agent's output is valid
-        2. If the White Agent's output is faulty
-
-        A faulty output is one that isn't consistent with the user message or the tools or actions might be needed.
-        A valid output is one that is consistent with the user message or the tools or actions might be needed.
+        You are the Supervisor Agent, responsible for validating White Agent outputs.
+        
+        Analyze the White Agent output and determine if it is VALID or FAULTY.
+        
+        **VALID output if:**
+        - The agent attempted to use appropriate tools to address the user's request
+        - The agent provided a response that addresses the user's intent (even if tools returned errors or no results)
+        - The agent's reasoning and actions are logical for the user's request
+        - Tool errors (e.g., "Error in FlightSearchTool", "No flights found") are VALID - they represent attempted tool usage
+        
+        **FAULTY output if:**
+        - The agent didn't attempt to use tools when they were clearly needed
+        - The agent used completely wrong tools for the request
+        - The agent's response completely ignores the user's intent
+        - The agent's output is incoherent or unrelated to the request
+        
+        **IMPORTANT:**
+        - Tool errors or "no results" messages are VALID if the agent tried to help
+        - Only mark as FAULTY if the agent failed to attempt the right approach or ignored the request
         
         User message: {user_message}
         White Agent output: {white_agent_output}
@@ -175,8 +304,7 @@ class WhiteAgent:
                 
                 # Clear tool context after successful validation (turn completed)
                 for tool in self.tools:
-                    if isinstance(tool, FlightSearchTool):
-                        tool.clear_context()
+                    tool.clear_context()
                 
                 return {
                     "messages": new_messages,
@@ -204,8 +332,7 @@ class WhiteAgent:
                 
                 # Clear tool context when max retries reached (turn ends unsuccessfully)
                 for tool in self.tools:
-                    if isinstance(tool, FlightSearchTool):
-                        tool.clear_context()
+                    tool.clear_context()
                 
                 return {
                     "messages": new_messages,
@@ -244,41 +371,121 @@ class WhiteAgent:
             "current_agent": AgentType.USER.value
         }
     
+    def _build_context_aware_input(self, messages: List[ChatMessage], current_user_input: str, max_turns: int = 2) -> str:
+        """
+        Build context-aware input for AgentExecutor that includes recent conversation history.
+        This maintains context for follow-up questions without causing infinite loops.
+        
+        Args:
+            messages: All conversation messages
+            current_user_input: The current user query
+            max_turns: Maximum number of previous user-assistant turns to include (default: 2)
+        
+        Returns:
+            Formatted input string with conversation context
+        """
+        # If this is the first message, just return it
+        if len(messages) <= 1:
+            return current_user_input
+        
+        # Collect recent user-assistant exchanges (ignore supervisor/tool messages)
+        user_assistant_pairs = []
+        
+        # Process messages in order, building pairs
+        # Look for pattern: USER -> [SUPERVISOR/TOOL]* -> WHITE_AGENT
+        i = 0
+        while i < len(messages) and len(user_assistant_pairs) < max_turns + 1:
+            msg = messages[i]
+            
+            # Find a user message
+            if msg.agent_type == AgentType.USER:
+                user_msg = msg.content
+                
+                # Skip if this is the current user input (we'll handle it separately)
+                if user_msg == current_user_input:
+                    i += 1
+                    continue
+                
+                # Look ahead for a WHITE_AGENT response
+                j = i + 1
+                while j < len(messages):
+                    if messages[j].agent_type == AgentType.WHITE_AGENT:
+                        # Found a pair
+                        user_assistant_pairs.append((user_msg, messages[j].content))
+                        i = j + 1  # Move past this pair
+                        break
+                    elif messages[j].agent_type == AgentType.USER:
+                        # Hit next user message without finding assistant response
+                        break
+                    j += 1
+                else:
+                    # Reached end of messages
+                    break
+                continue
+            i += 1
+        
+        # Only keep the last max_turns pairs (excluding current)
+        if len(user_assistant_pairs) > max_turns:
+            user_assistant_pairs = user_assistant_pairs[-max_turns:]
+        
+        # If we have previous context, format it
+        if user_assistant_pairs:
+            context_parts = ["## Previous Conversation Context"]
+            for idx, (user_msg, assistant_msg) in enumerate(user_assistant_pairs, 1):
+                context_parts.append(f"\n### Turn {idx}")
+                context_parts.append(f"User: {user_msg}")
+                # Truncate long assistant messages to keep context focused
+                truncated_assistant = assistant_msg[:500] + "..." if len(assistant_msg) > 500 else assistant_msg
+                context_parts.append(f"Assistant: {truncated_assistant}")
+            
+            context_parts.append("\n## Current Request")
+            context_parts.append(f"User: {current_user_input}")
+            
+            return "\n".join(context_parts)
+        
+        # No previous context, just return current input
+        return current_user_input
+    
     async def _white_agent_reasoning(self, state: AgentState) -> Dict[str, Any]:
-        """White Agent reasoning and analysis"""
+        """White Agent reasoning and analysis using AgentExecutor"""
         logger.info("White Agent reasoning")
         print("White Agent reasoning")
+        
+        # Reset tool call tracking for this execution
+        try:
+            import sys
+            import os
+            # Add backend to path if needed
+            backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if backend_path not in sys.path:
+                sys.path.insert(0, backend_path)
+            from green_agent.integration import reset_tool_call_tracking
+            reset_tool_call_tracking()
+            logger.info("[WhiteAgent] Tool call tracking reset for new execution")
+        except Exception as e:
+            logger.warning(f"[WhiteAgent] Failed to reset tool call tracking: {e}", exc_info=True)
+        
         messages = state.get("messages", [])
         if not messages:
             # nothing to reason about; just pass through
             return {"messages": messages, "current_agent": AgentType.WHITE_AGENT.value}
 
-        # Build conversation history for the react agent
-        # Convert our ChatMessage objects to LangChain message format
-        langchain_messages = []
-        conversation_context = []  # For tool context injection
-        
-        # Find the last user message (start of current turn)
-        # This should be the most recent user message
+        # Find the last user message (current query)
+        user_input = None
         last_user_idx = None
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].agent_type == AgentType.USER:
                 last_user_idx = i
+                user_input = messages[i].content
                 break
         
-        # Build full conversation history for LLM (all messages)
-        # Note: ToolMessages are handled internally by react agent, we don't need to add them here
-        for msg in messages:
-            if msg.agent_type == AgentType.USER:
-                langchain_messages.append(HumanMessage(content=msg.content))
-            elif msg.agent_type == AgentType.WHITE_AGENT:
-                langchain_messages.append(AIMessage(content=msg.content))
-            # Tool messages are handled by react agent internally when tools are called
-        
+        if not user_input:
+            return {"messages": messages, "current_agent": AgentType.WHITE_AGENT.value}
 
+        # Build conversation context for tools
+        conversation_context = []
         if last_user_idx is not None:
-            # Only include messages from the current turn (from last user message onwards)
-            # Exclude supervisor messages as they're validation only
+            # Include messages from current turn for tool context
             for msg in messages[last_user_idx:]:
                 if msg.agent_type == AgentType.USER:
                     conversation_context.append({"role": "user", "content": msg.content})
@@ -286,46 +493,144 @@ class WhiteAgent:
                     conversation_context.append({"role": "assistant", "content": msg.content})
                 elif msg.agent_type == AgentType.TOOL:
                     conversation_context.append({"role": "tool", "content": msg.content})
-                # Skip supervisor messages - they're validation only, not conversation context
         
-        # Inject conversation context into FlightSearchTool
-        # Clear context first to ensure we start fresh for each turn
+        # Inject conversation context into all tools
         for tool in self.tools:
-            if isinstance(tool, FlightSearchTool):
-                tool.clear_context()  # Clear first to ensure fresh start
-                tool.set_context(conversation_context)
+            tool.clear_context()
+            tool.set_context(conversation_context)
         
-        print(f"Sending {len(langchain_messages)} messages to react agent")
-        print(f"Tool context: {len(conversation_context)} messages (last_user_idx={last_user_idx})")
-        print(f"Last message: {langchain_messages[-1].content if langchain_messages else 'None'}")
+        print(f"User input: {user_input}")
+        print(f"Tool context: {len(conversation_context)} messages")
 
-        # Invoke the react agent with FULL conversation history
-        response = await self.agent.ainvoke({"messages": langchain_messages})
-        print(f"React agent returned {len(response.get('messages', []))} messages")
-
-        new_messages = deepcopy(messages)
+        # Build conversation history for context (last 2-3 turns to prevent bloat)
+        # This helps maintain context for follow-up questions without causing loops
+        context_input = self._build_context_aware_input(messages, user_input, max_turns=2)
         
-        # Convert LangChain messages to ChatMessage objects
-        # Only add NEW messages (skip the ones we sent)
-        existing_count = len(langchain_messages)
-        for msg in response.get("messages", [])[existing_count:]:
-            # Determine agent type based on message type
-            if isinstance(msg, AIMessage):
-                agent_type = AgentType.WHITE_AGENT
-            elif isinstance(msg, ToolMessage):
-                # DON'T skip ToolMessages - capture them!
-                agent_type = AgentType.TOOL
-            else:
-                agent_type = AgentType.WHITE_AGENT
+        # Invoke AgentExecutor with context-aware input
+        # AgentExecutor handles the ReAct loop internally
+        try:
+            result = await self.agent_executor.ainvoke({"input": context_input})
+            output = result.get("output", "")
+            intermediate_steps = result.get("intermediate_steps", [])
             
-            chat_msg = ChatMessage(
-                content=str(msg.content),
-                agent_type=agent_type,
+            print(f"AgentExecutor returned output: {output[:200]}...")
+            print(f"Intermediate steps: {len(intermediate_steps)} tool calls")
+            
+            # Store intermediate steps for Green Agent to access and emit events
+            # Each step is a tuple: (AgentAction, tool_output)
+            # tool_output is the raw return value from the tool (could be DataFrame, JSON, or string)
+            tool_call_data = []
+            event_queue = getattr(self, '_event_queue', None)
+            
+            for step_idx, step in enumerate(intermediate_steps):
+                if len(step) >= 2:
+                    agent_action = step[0]
+                    tool_output = step[1]
+                    
+                    # Get raw data if available from fixture wrapper
+                    raw_data = tool_output
+                    output_type = type(tool_output).__name__
+                    
+                    # Try to get raw DataFrame/JSON from fixture wrapper if output is string
+                    if isinstance(tool_output, str) and hasattr(self, '_tool_interceptor'):
+                        interceptor = getattr(self, '_tool_interceptor', None)
+                        if interceptor:
+                            # interceptor.fixture_wrapper is the FixtureWrapper instance directly
+                            fixture_wrapper = getattr(interceptor, 'fixture_wrapper', None)
+                            if fixture_wrapper and hasattr(fixture_wrapper, '_last_fixture_data'):
+                                last_fixture = getattr(fixture_wrapper, '_last_fixture_data', None)
+                                if last_fixture is not None:
+                                    raw_data = last_fixture
+                                    output_type = type(raw_data).__name__
+                    
+                    # Extract DataFrame operations if this is a python_repl_ast call
+                    df_operations = None
+                    tool_input = agent_action.tool_input if hasattr(agent_action, 'tool_input') else None
+                    tool_name = agent_action.tool if hasattr(agent_action, 'tool') else None
+                    
+                    if tool_name == 'python_repl_ast' and tool_input:
+                        try:
+                            # Import here to avoid circular dependencies
+                            from green_agent.utils.df_parser import extract_df_operations
+                            df_operations = extract_df_operations(str(tool_input))
+                        except Exception as e:
+                            logger.warning(f"Failed to extract DataFrame operations: {e}")
+                            df_operations = None
+                    
+                    tool_call_data.append({
+                        "tool": tool_name,
+                        "tool_input": tool_input,
+                        "raw_output": raw_data,  # This is the actual DataFrame/JSON before string conversion
+                        "output_type": output_type,
+                        "df_operations": df_operations
+                    })
+                    
+                    # Emit intermediate step event if event queue is available
+                    if event_queue:
+                        try:
+                            # Serialize raw data for event emission
+                            serialized_data = raw_data
+                            if hasattr(raw_data, 'to_dict'):
+                                # DataFrame
+                                serialized_data = raw_data.to_dict('records')
+                            elif hasattr(raw_data, 'to_json'):
+                                # DataFrame with to_json
+                                import json as json_module
+                                serialized_data = json_module.loads(raw_data.to_json(orient='records'))
+                            elif isinstance(raw_data, (dict, list)):
+                                # Already serializable
+                                serialized_data = raw_data
+                            else:
+                                # Convert to string for serialization
+                                serialized_data = str(raw_data)
+                            
+                            event = {
+                                'type': 'tool_call_step',
+                                'timestamp': datetime.now().isoformat(),
+                                'data': {
+                                    'step_index': step_idx,
+                                    'tool_name': tool_name,
+                                    'tool_input': tool_input,
+                                    'raw_output': serialized_data,
+                                    'output_type': output_type,
+                                    'output_length': len(str(tool_output)) if tool_output else 0,
+                                    'df_operations': df_operations
+                                }
+                            }
+                            event_queue.put(event)
+                            logger.info(f"[WhiteAgent] Emitted intermediate step event for {agent_action.tool if hasattr(agent_action, 'tool') else 'unknown'}")
+                        except Exception as e:
+                            logger.warning(f"[WhiteAgent] Failed to emit intermediate step event: {e}", exc_info=True)
+            
+            # Store in state for Green Agent to access
+            self.state["agent_executor_intermediate_steps"] = tool_call_data
+            
+            # Add the agent's response to messages
+            new_messages = deepcopy(messages)
+            
+            # The AgentExecutor internally handles tool calls, but we need to capture the final output
+            # For now, we'll add the final output as a WHITE_AGENT message
+            white_agent_msg = ChatMessage(
+                content=output,
+                agent_type=AgentType.WHITE_AGENT,
                 timestamp=datetime.now()
             )
-            new_messages.append(chat_msg)
-            print(f"Added message: {agent_type.value} - {str(msg.content)[:100]}...", flush=True)
+            new_messages.append(white_agent_msg)
 
+            return {
+                "messages": new_messages,
+                "current_agent": AgentType.WHITE_AGENT.value,
+                "retry_reasoning": False
+            }
+        except Exception as e:
+            logger.error(f"Error in AgentExecutor: {e}")
+            new_messages = deepcopy(messages)
+            error_msg = ChatMessage(
+                content=f"Error processing request: {str(e)}",
+                agent_type=AgentType.WHITE_AGENT,
+                timestamp=datetime.now()
+            )
+            new_messages.append(error_msg)
         return {
             "messages": new_messages,
             "current_agent": AgentType.WHITE_AGENT.value,
@@ -335,14 +640,65 @@ class WhiteAgent:
     async def process_message(self, message: str) -> Dict[str, Any]:
         """Main method to process a user message"""
         try:
-            # append user message ONCE here
-            self.state["messages"].append(ChatMessage(
-                content=message,
-                agent_type=AgentType.USER,
-                timestamp=datetime.now()
-            ))
+            # IMPORTANT: Check if this exact message was just processed to prevent duplicate execution
+            # This happens when Green Agent calls White Agent and White Agent's graph loops back
+            existing_messages = self.state.get("messages", [])
+            
+            logger.info(f"[WhiteAgent] process_message called with message (first 100 chars): {message[:100]}...")
+            logger.info(f"[WhiteAgent] Current state has {len(existing_messages)} messages")
+            
+            # Check if this message was just processed (exists as last USER message)
+            if existing_messages:
+                last_user_msg = None
+                last_user_idx = None
+                for i, msg in enumerate(reversed(existing_messages)):
+                    if msg.agent_type == AgentType.USER:
+                        last_user_msg = msg
+                        last_user_idx = len(existing_messages) - 1 - i
+                        break
+                
+                # If the last user message matches this one, check if it already has a response
+                if last_user_msg and last_user_msg.content == message:
+                    # Check if there's already a response for this message (in messages after it)
+                    messages_after_user = existing_messages[last_user_idx + 1:]
+                    has_response = any(
+                        msg.agent_type in (AgentType.WHITE_AGENT, AgentType.SUPERVISOR)
+                        for msg in messages_after_user
+                    )
+                    if has_response:
+                        logger.warning(f"[WhiteAgent] ⚠️ DUPLICATE EXECUTION DETECTED: Message already processed, skipping: {message[:80]}...")
+                        # Return existing response instead of re-processing
+                        for msg in reversed(messages_after_user):
+                            if msg.agent_type == AgentType.WHITE_AGENT:
+                                logger.info(f"[WhiteAgent] ✅ Returning cached response for duplicate message")
+                                return {
+                                    "message": msg.content,
+                                    "agent_type": msg.agent_type.value,
+                                    "conversation_length": len(existing_messages),
+                                    "conversation_history": len(existing_messages)
+                                }
+            
+            # Only append if this is a genuinely new message
+            # Check if message is already in state (might have been added by graph already)
+            message_already_in_state = any(
+                msg.content == message and msg.agent_type == AgentType.USER
+                for msg in existing_messages
+            )
+            
+            if not message_already_in_state:
+                # append user message ONCE here
+                logger.info(f"[WhiteAgent] ✅ New message, appending to state and invoking graph")
+                self.state["messages"].append(ChatMessage(
+                    content=message,
+                    agent_type=AgentType.USER,
+                    timestamp=datetime.now()
+                ))
+            else:
+                logger.info(f"[WhiteAgent] Message already in state, not appending duplicate: {message[:80]}...")
 
+            logger.info(f"[WhiteAgent] Invoking graph with {len(self.state.get('messages', []))} messages")
             result = await self.graph.ainvoke(self.state)
+            logger.info(f"[WhiteAgent] Graph execution completed. Result has {len(result.get('messages', []))} messages")
             
             # IMPORTANT: Update self.state with the result to persist conversation history
             self.state = result
@@ -469,10 +825,20 @@ class GreenAgent:
         
         user_message = messages[-1].content
         
+        # Log to track duplicate calls
+        logger.info(f"[GreenAgent] Calling White Agent with message (first 100 chars): {user_message[:100]}...")
+        
         try:
+            # IMPORTANT: When Green Agent calls White Agent, ensure clean execution
+            # The White Agent's process_message will append to its state, so we need to
+            # make sure we're not duplicating messages. The White Agent manages its own state.
+            
             # Call White Agent with user query
+            # Note: process_message will append message to White Agent's state and run graph
+            logger.info(f"[GreenAgent] Invoking White Agent process_message...")
             white_agent_result = await self.white_agent.process_message(user_message)
             white_agent_response = white_agent_result.get("message", "")
+            logger.info(f"[GreenAgent] White Agent returned response (length: {len(white_agent_response)})")
             
             # Store White Agent response in state
             white_agent_msg = ChatMessage(
@@ -489,7 +855,7 @@ class GreenAgent:
                 "white_agent_response": white_agent_response
             }
         except Exception as e:
-            logger.error(f"Error calling White Agent: {e}")
+            logger.error(f"Error calling White Agent: {e}", exc_info=True)
             error_msg = ChatMessage(
                 content=f"Error: White Agent failed to process request: {str(e)}",
                 agent_type=AgentType.WHITE_AGENT,
@@ -516,7 +882,11 @@ class GreenAgent:
             return {"messages": messages, "current_agent": AgentType.GREEN_AGENT.value}
         
         # Create evaluation prompt
-        system_prompt = """You are the Green Agent, an AI evaluator that assesses outputs from White Agents.
+        system_prompt = """You are the Green Agent, an orchestrator and evaluator that coordinates the White Agent's execution and assesses its outputs.
+
+Your role:
+1. **Orchestration**: You call the White Agent to handle user travel planning requests
+2. **Evaluation**: You assess the White Agent's outputs across quality criteria
 
 Evaluate the White Agent's response across 4 criteria:
 1. Correctness (0-10): Factual accuracy and logical consistency
@@ -825,6 +1195,7 @@ Evaluate this response across the 4 criteria and provide scores with detailed re
             # Get the final response
             messages = result.get("messages", [])
             evaluation_result = result.get("evaluation_result")
+            white_agent_response = result.get("white_agent_response", "")
             
             # Find the last Green Agent message (evaluation summary)
             final_response = None
@@ -836,10 +1207,17 @@ Evaluate this response across the 4 criteria and provide scores with detailed re
             if not final_response:
                 final_response = messages[-1] if messages else None
             
+            # If white_agent_response is not in result, try to extract from messages
+            if not white_agent_response:
+                white_agent_messages = [m for m in messages if hasattr(m, 'agent_type') and m.agent_type.value == 'white_agent']
+                if white_agent_messages:
+                    white_agent_response = white_agent_messages[-1].content
+            
             response_data = {
                 "message": final_response.content if final_response else "No response generated",
                 "agent_type": final_response.agent_type.value if final_response else AgentType.GREEN_AGENT.value,
-                "conversation_length": len(messages)
+                "conversation_length": len(messages),
+                "white_agent_response": white_agent_response  # Include White Agent's response
             }
             
             # Include evaluation result if available

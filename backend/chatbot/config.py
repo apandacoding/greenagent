@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     serp_api_key: str = os.getenv("SERP_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    yelp_api_key: str = os.getenv("YELP_API_KEY", "")
     
    
     base_url: str = os.getenv("BASE_URL", "https://serpapi.com/search")

@@ -34,6 +34,101 @@ with open(os.path.join(functions_dir, "serp_params_round_trip.json"), "r") as f:
     serp_params_round_trip = json.load(f)
 
 
+# ============================================================================
+# Airport Code Normalization
+# ============================================================================
+# This module handles the conversion of city codes to airport codes.
+# Some LLMs may return city codes (like "NYC" for New York) instead of 
+# actual airport codes (like "JFK", "LGA", or "EWR"). This mapping ensures
+# we always use valid airport codes for the flight API.
+
+# Mapping of city codes (not valid airport codes) to their primary airport codes
+# This handles cases where LLM returns city codes instead of airport codes
+# Only include codes that are NOT valid airport codes
+CITY_CODE_TO_AIRPORT = {
+    "NYC": "JFK",  # New York City -> JFK (primary international), alternatives: LGA, EWR
+    "WAS": "DCA",  # Washington DC -> DCA (primary), alternatives: IAD, BWI
+    "CHI": "ORD",  # Chicago -> ORD (primary), alternatives: MDW
+    # Note: Codes like LAX, SFO, MIA are both city codes AND valid airport codes,
+    # so they don't need mapping and will pass through unchanged
+}
+
+# Common airport codes for major cities (for reference and potential future use)
+# This can be used for fallback logic or multi-airport searches
+MAJOR_CITY_AIRPORTS = {
+    "New York": ["JFK", "LGA", "EWR"],
+    "Washington": ["DCA", "IAD", "BWI"],
+    "Chicago": ["ORD", "MDW"],
+    "Los Angeles": ["LAX", "BUR", "SNA", "LGB", "ONT"],
+    "San Francisco": ["SFO", "OAK", "SJC"],
+    "London": ["LHR", "LGW", "STN", "LTN"],
+    "Paris": ["CDG", "ORY"],
+    "Tokyo": ["NRT", "HND"],
+}
+
+def normalize_airport_code(code: str) -> str:
+    """
+    Normalize an airport code by converting city codes to airport codes.
+    
+    This function handles the common issue where LLMs return city codes
+    (like "NYC") instead of actual airport codes (like "JFK"). It converts
+    known city codes to their primary airport codes.
+    
+    Args:
+        code: IATA code (may be city code or airport code)
+        
+    Returns:
+        Valid airport code (normalized to uppercase)
+        
+    Examples:
+        normalize_airport_code("NYC") -> "JFK"
+        normalize_airport_code("jfk") -> "JFK"
+        normalize_airport_code("LAX") -> "LAX"  # Already valid
+    """
+    if not code or len(code) != 3:
+        return code
+    
+    code_upper = code.upper()
+    
+    # Check if it's a city code that needs conversion
+    if code_upper in CITY_CODE_TO_AIRPORT:
+        normalized = CITY_CODE_TO_AIRPORT[code_upper]
+        logger.warning(
+            f"Converted city code '{code_upper}' to airport code '{normalized}'. "
+            f"City codes are not valid for flight searches."
+        )
+        return normalized
+    
+    # Return as-is if it's already a valid airport code (or unknown code)
+    return code_upper
+
+def validate_and_normalize_airport_codes(params: dict) -> dict:
+    """
+    Validate and normalize airport codes in flight parameters.
+    
+    This function ensures that both departure_id and arrival_id are valid
+    airport codes, not city codes. It normalizes them using the city code
+    mapping if necessary.
+    
+    Args:
+        params: Flight API parameters dictionary with 'departure_id' and/or 'arrival_id'
+        
+    Returns:
+        Parameters dictionary with normalized airport codes
+        
+    Example:
+        params = {"departure_id": "NYC", "arrival_id": "LAX"}
+        validate_and_normalize_airport_codes(params)
+        # Returns: {"departure_id": "JFK", "arrival_id": "LAX"}
+    """
+    if "departure_id" in params:
+        params["departure_id"] = normalize_airport_code(params["departure_id"])
+    
+    if "arrival_id" in params:
+        params["arrival_id"] = normalize_airport_code(params["arrival_id"])
+    
+    return params
+
 iata_schema = {
     "type": "object",
     "properties": {
@@ -266,10 +361,20 @@ def anthropic_IATA_call(iata_result: str):
     
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        system="Return the IATA codes for the city provided by the user",
+        system=(
+            "Return the IATA AIRPORT codes (not city codes) for the city provided by the user. "
+            "CRITICAL: Return valid airport codes, not city codes. "
+            "Examples: New York -> 'JFK' (not 'NYC'), Washington DC -> 'DCA' (not 'WAS'), Chicago -> 'ORD' (not 'CHI'). "
+            "For cities with multiple airports, use the primary international airport: "
+            "New York -> JFK, Washington -> DCA, Chicago -> ORD, Los Angeles -> LAX, San Francisco -> SFO."
+        ),
         tools=[{
             "name": "get_iata_codes",
-            "description": "Return the IATA codes for the city provided by the user",
+            "description": (
+                "Return the IATA AIRPORT codes for the city. "
+                "Return valid airport codes (JFK, LAX, SFO, ORD, DCA, etc.), NOT city codes (NYC, WAS, CHI). "
+                "For New York use JFK, for Washington use DCA, for Chicago use ORD."
+            ),
             "input_schema": iata_schema,
         }],
         tool_choice={"type": "tool", "name": "get_iata_codes"},
@@ -291,80 +396,168 @@ def anthropic_IATA_call(iata_result: str):
 def get_flight_api_params(iata_result: dict):
     client = anthropic.Anthropic(api_key=anthropic_api_key)
 
-    # build a new structured prompt using the IATA result
-    original_prompt = iata_result.get('original_prompt', '')
-    prompt_text = (
-        f"User's complete original request: {original_prompt}\n\n"
+    original_prompt = iata_result.get("original_prompt", "")
+    dep = iata_result.get("from")
+    arr = iata_result.get("destination")
+
+    # System prompt forces strict tool use
+    system_prompt = (
+        "You are a flight-parameter extraction engine. "
+        "You MUST call exactly one tool. "
+        "You MUST satisfy the strict JSON schema of whichever tool you call. "
+        "You MUST NOT output natural language or explanations. "
+        "Rules:\n"
+        "- Call get_flight_api_params_round_trip IF AND ONLY IF the user provides both an outbound and a return date.\n"
+        "- Otherwise, call get_flight_api_params_one_way.\n\n"
+        "Return ONLY a tool call. No extra text."
+    )
+
+    user_msg = (
+        f"Original user request:\n{original_prompt}\n\n"
         f"Extracted IATA codes:\n"
-        f"- Departure: {iata_result.get('from')}\n"
-        f"- Arrival: {iata_result.get('destination')}\n\n"
-        f"CRITICAL: Determine the flight type from the user's request above.\n"
-        f"- ONE-WAY: If user says 'one-way', 'one way', 'single', or does NOT mention a return date (default choice unless a return date is explicitly mentioned)\n"
-        f"- ROUND-TRIP: ONLY if user explicitly says 'round-trip', 'round trip', 'return flight', or provides BOTH departure AND return dates\n"
-        f"Default to ONE-WAY unless round-trip is explicitly mentioned."
+        f"- Departure: {dep}\n"
+        f"- Arrival: {arr}\n\n"
+        "Determine flight type and call the correct tool. "
+        "Return ONLY a tool call."
     )
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=1024,
-        tools=[{
-            "name": "get_flight_api_params_round_trip",
-            "description": "ONLY use for round trip flights. Use this ONLY if the user explicitly says 'round-trip', 'round trip', 'return flight', or provides BOTH an outbound date AND a return date. DO NOT use this for one-way flights.",
-            "input_schema": serp_params_round_trip,
-        },
-        {
-            "name": "get_flight_api_params_one_way",
-            "description": "Use for one-way flights. Use this if: (1) user explicitly says 'one-way' or 'one way', OR (2) user only provides a departure date with no return date mentioned. This is the DEFAULT choice unless round-trip is explicitly requested.",
-            "input_schema": serp_params_one_way,
-        },
+        system=system_prompt,
+        tools=[
+            {
+                "name": "get_flight_api_params_round_trip",
+                "description": "Use ONLY when user explicitly provides a return date.",
+                "input_schema": serp_params_round_trip,
+            },
+            {
+                "name": "get_flight_api_params_one_way",
+                "description": "Default choice; use when no return date is provided.",
+                "input_schema": serp_params_one_way,
+            },
         ],
-        tool_choice={"type": "auto"},
-        messages=[{"role": "user", "content": prompt_text}],
+        # THE FIX → must be a dict
+        tool_choice={"type": "any"},  # forces tool use
+        messages=[{"role": "user", "content": user_msg}],
     )
 
-    # Extract structured params
-    if not response.content:
-        raise ValueError("Empty response from Anthropic API when extracting flight params")
-    
-    first_block = response.content[0]
-    if first_block.type != "tool_use":
-        error_text = first_block.text if hasattr(first_block, 'text') else str(first_block)
-        raise ValueError(f"Expected tool use but got {first_block.type}: {error_text}. The LLM did not call a flight params tool.")
-    
-    # Log which tool was called for debugging
-    tool_name = first_block.name if hasattr(first_block, 'name') else 'unknown'
-    logger.info(f"LLM selected tool: {tool_name}")
-    print(f"🔧 LLM selected tool: {tool_name}", flush=True)
-    
-    params = first_block.input  # final Google Flights params dict
-    params['api_key'] = serp_api_key
+    # Extract tool call
+    block = response.content[0]
+    if block.type != "tool_use":
+        raise ValueError(f"Claude did not output a tool call: {block}")
 
-    return params
+    tool_input = block.input
+    tool_input["api_key"] = serp_api_key
+    
+    # Normalize airport codes (convert city codes to airport codes)
+    tool_input = validate_and_normalize_airport_codes(tool_input)
 
-def get_flight_params(user_prompt: str):
-    iata_chain = RunnableLambda(anthropic_IATA_call)
-    flight_chain = RunnableLambda(get_flight_api_params)
-    pipeline = iata_chain | flight_chain
-    result = pipeline.invoke(user_prompt)
-    return result
+    print(f"🔧 LLM selected tool: {block.name}")
+    return tool_input
+
+
+
+def get_flight_api_params_direct(user_prompt: str):
+    """
+    Extract flight API parameters directly from user prompt (refactored to match hotels.py structure).
+    This combines IATA extraction and flight params extraction in a cleaner, single-pass approach.
+    """
+    client = anthropic.Anthropic(api_key=anthropic_api_key)
+    
+    # run the anthropic_IATA_call function to get the IATA codes
+    iata_result = anthropic_IATA_call(user_prompt)
+    dep = iata_result.get("from")
+    arr = iata_result.get("destination")
+
+    user_prompt = (
+        f"Original user request:\n{user_prompt}\n\n"
+        f"Extracted IATA codes:\n"
+        f"- Departure: {dep}\n"
+        f"- Arrival: {arr}\n\n"
+    )
+
+    system_prompt = (
+        f"You are a flight-parameter extraction engine. "
+        f"Extract flight search parameters from the following user prompt. "
+        f"The prompt is delimited below:\n"
+        f"-----\n"
+        f"{user_prompt}"
+        f"\n-----\n"
+        "Convert city names to IATA AIRPORT codes (not city codes). "
+        "Examples: 'Los Angeles' -> 'LAX', 'New York' -> 'JFK', 'San Francisco' -> 'SFO', 'Chicago' -> 'ORD', 'Washington DC' -> 'DCA'. "
+        "CRITICAL RULES: "
+        "- 'NYC' is a CITY code, NOT an airport code. For New York, use 'JFK' (preferred), 'LGA', or 'EWR'. "
+        "- 'WAS' is a CITY code, NOT an airport code. For Washington DC, use 'DCA' (preferred), 'IAD', or 'BWI'. "
+        "- 'CHI' is a CITY code, NOT an airport code. For Chicago, use 'ORD' (preferred) or 'MDW'. "
+        "- Always return valid IATA AIRPORT codes (3 letters). "
+        "- For major cities with multiple airports, use the primary international airport (JFK for NYC, DCA for DC, ORD for Chicago). "
+        "You MUST call exactly one tool with all required parameters."
+    )
+    
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            system=system_prompt,
+            tools=[
+                {
+                    "name": "get_flight_api_params_round_trip",
+                    "description": "Use when user provides both outbound and return dates.",
+                    "input_schema": serp_params_round_trip,
+                },
+                {
+                    "name": "get_flight_api_params_one_way",
+                    "description": "Use when user provides only departure date or no return date.",
+                    "input_schema": serp_params_one_way,
+                },
+            ],
+            tool_choice={"type": "any"},
+            messages=[{"role": "user", "content": user_prompt}],
+            max_tokens=1024
+        )
+        
+        if not response.content:
+            raise ValueError("Empty response from Anthropic API")
+        
+        first_block = response.content[0]
+        if first_block.type != "tool_use":
+            error_text = first_block.text if hasattr(first_block, 'text') else str(first_block)
+            raise ValueError(f"Expected tool use but got {first_block.type}: {error_text}")
+        
+        params = first_block.input
+        params["api_key"] = serp_api_key
+        
+        # Normalize airport codes (convert city codes to airport codes)
+        params = validate_and_normalize_airport_codes(params)
+        
+        print(f"🔧 LLM selected tool: {first_block.name}")
+        print(f"Parsed params: {params}")
+        logger.info(f"🔧 LLM selected tool: {first_block.name}")
+        logger.info(f"Parsed params: {params}")
+        return params
+        
+    except Exception as e:
+        logger.error(f"Error extracting flight parameters: {e}", exc_info=True)
+        raise ValueError(f"Error extracting flight parameters: {str(e)}. The user query may be missing required information (origin, destination, or departure date).")
 
 
 def flight_tool(user_prompt: str):
-    iata_chain = RunnableLambda(anthropic_IATA_call)
-    flight_chain = RunnableLambda(get_flight_api_params)
-    pipeline = iata_chain | flight_chain
-    print("user prompt", user_prompt)
-    
+    """
+    Main flight search function (refactored to match hotels.py structure).
+    """
     try:
-        result = pipeline.invoke(user_prompt)
-    except Exception as e:
-        error_msg = f"Error extracting flight parameters: {str(e)}. The user query may be missing required information (origin, destination, or departure date)."
+        # Get flight API parameters (simplified - single extraction step)
+        params = get_flight_api_params_direct(user_prompt)
+    except ValueError as e:
+        # Parameter extraction failed
+        error_msg = str(e)
         logger.error(f"Flight params extraction error: {e}")
-        return error_msg
+        return f"PERMANENT_FAILURE: {error_msg} Cannot proceed with flight search."
+    except Exception as e:
+        error_msg = f"Error extracting flight parameters: {str(e)}"
+        logger.error(f"Flight params extraction error: {e}", exc_info=True)
+        return f"PERMANENT_FAILURE: {error_msg} Cannot proceed with flight search."
 
-    # make a flight booking
-    params = result
-    params['api_key'] = serp_api_key
     url = "https://serpapi.com/search"
     
     try:
@@ -391,10 +584,11 @@ def flight_tool(user_prompt: str):
             missing_params.append("departure date")
         
         error_msg = (
-            f"Error fetching flights from API (status {status_code}). "
+            f"PERMANENT_FAILURE: Error fetching flights from API (status {status_code}). "
             f"API Error: {error_detail}. "
             f"Missing required parameters: {', '.join(missing_params) if missing_params else 'unknown'}. "
-            f"Please provide complete flight information including origin, destination, and departure date."
+            f"Please provide complete flight information including origin, destination, and departure date. "
+            f"DO NOT retry this search."
         )
         logger.error(f"SerpAPI error: {status_code} - {error_detail}")
         logger.error(f"Params sent: {params}")
@@ -416,9 +610,10 @@ def flight_tool(user_prompt: str):
     # Validate that we have flight data
     if not data or not _get_all_outbounds(data):
         error_msg = (
-            "No flight data returned from API. "
+            "PERMANENT_FAILURE: No flight data returned from API. "
             "This may indicate missing or invalid search parameters. "
-            "Please ensure you have provided: origin airport, destination airport, and departure date."
+            "Please ensure you have provided: origin airport, destination airport, and departure date. "
+            "DO NOT retry this search with similar parameters."
         )
         logger.warning(f"No flight data in response. Params: {params}")
         return error_msg
@@ -430,9 +625,9 @@ def flight_tool(user_prompt: str):
     except (KeyError, ValueError) as e:
         # Handle missing columns/data structure issues
         error_msg = (
-            f"Error processing flight data: {str(e)}. "
+            f"PERMANENT_FAILURE: Error processing flight data: {str(e)}. "
             "The API response may be missing required flight information. "
-            "Please try again with complete flight details (origin, destination, departure date)."
+            "DO NOT retry this search - the data structure is incompatible."
         )
         logger.error(f"Flight data processing error: {e}")
         return error_msg
