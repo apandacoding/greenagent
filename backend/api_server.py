@@ -87,9 +87,18 @@ if not hasattr(sys.stdout, 'file') or sys.stdout.file.name != LOG_FILE_PATH:
 app = FastAPI(title="Green Agent API", version="1.0.0")
 
 # Configure CORS
+# Get allowed origins from environment variable or use defaults
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+if allowed_origins_env:
+    # Split comma-separated origins from environment variable
+    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+else:
+    # Default to localhost for development
+    allowed_origins = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],  # Vite default port
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
