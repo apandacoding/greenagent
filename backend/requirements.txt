@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+langchain
+langchain-anthropic
+anthropic
+pandas
+python-dotenv
+requests
+tabulate
+langgraph
+langchain-openai
+langchain-experimental
+langchain-core
+watchfiles
+websockets
