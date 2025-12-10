@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Google Hotels Search Params",
+  "description": "Parameters for SerpAPI Google Hotels search. ALL fields must be returned as strings, including numbers and booleans.",
+  "type": "object",
+
+  "properties": {
+    "engine": { "const": "google_hotels" },
+
+    "q": {
+      "type": "string",
+      "description": "Clean hotel search query. Example: 'New York hotels', 'Bali resorts', 'hotels near Times Square'."
+    },
+
+    "check_in_date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Check-in date (YYYY-MM-DD)."
+    },
+
+    "check_out_date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Check-out date (YYYY-MM-DD)."
+    },
+
+    "adults": {
+      "type": "string",
+      "description": "Number of adults (string). Example: '2'."
+    },
+
+    "children": {
+      "type": "string",
+      "description": "Number of children (string). Example: '0'.",
+      "default": "0"
+    },
+
+    "sort_by": {
+      "type": "string",
+      "description": "Sorting preference ONLY if the user explicitly requests sorting. Valid values: '3' (lowest price), '8' (highest rating), '13' (most reviewed). If no sorting preference is mentioned, DO NOT include this property."
+    },
+
+    "currency": {
+      "type": "string",
+      "enum": ["USD"],
+      "description": "Currency for results (string)."
+    },
+
+    "hl": {
+      "type": "string",
+      "enum": ["en"],
+      "description": "UI language."
+    },
+
+    "gl": {
+      "type": "string",
+      "enum": ["us"],
+      "description": "Geographic region."
+    },
+
+    "free_cancellation": {
+      "type": "string",
+      "enum": ["true", "false"],
+      "description": "Filter for free cancellation. MUST be returned as 'true' or 'false' (string)."
+    },
+
+    "min_price": {
+      "type": "string",
+      "description": "Optional minimum price filter (string). Example: '50'."
+    },
+
+    "max_price": {
+      "type": "string",
+      "description": "Optional maximum price filter (string). Example: '300'."
+    }
+  },
+
+  "required": [
+    "engine",
+    "q",
+    "check_in_date",
+    "check_out_date",
+    "adults",
+    "currency",
+    "hl",
+    "gl",
+    "free_cancellation"
+  ],
+
+  "additionalProperties": false
+}

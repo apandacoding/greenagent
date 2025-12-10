@@ -10,6 +10,8 @@ class AgentType(str, Enum):
     USER = "user"
     WHITE_AGENT = "white_agent"
     GREEN_AGENT = "green_agent"
+    SUPERVISOR = "supervisor"
+    TOOL = "tool"
 
 class MessageType(str, Enum):
     TEXT = "text"
@@ -69,6 +71,62 @@ class FlightSearchResponse(BaseModel):
     total_results: int
     search_params: Dict[str, Any]
     timestamp: datetime
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+# Evaluation models for Green Agent
+class CriterionScore(BaseModel):
+    criterion: str
+    score: float
+    maxScore: float = 10.0
+    reasoning: str
+
+class RunScore(BaseModel):
+    agentName: str
+    criteria: List[CriterionScore]
+    overallScore: float
+
+class ScoreBreakdown(BaseModel):
+    runs: List[RunScore]
+    aggregatedScore: float
+    aggregationMethod: str
+    detailedReasoning: str
+
+class TaskDetail(BaseModel):
+    taskId: str
+    taskName: str
+    title: str
+    fullDescription: str
+
+class WhiteAgentOutput(BaseModel):
+    agentName: str
+    output: str
+    timestamp: str
+
+class AgentTrace(BaseModel):
+    timestamp: str
+    agent: str
+    action: str
+    direction: Optional[str] = None  # 'send' or 'receive'
+
+class ScenarioDetail(BaseModel):
+    description: str
+    agentTraces: List[AgentTrace]
+    whiteAgentOutputs: List[WhiteAgentOutput]
+
+class EvaluationResult(BaseModel):
+    id: str
+    taskName: str
+    title: str
+    modelsUsed: List[str]
+    scenarioSummary: str
+    aggregatedScore: float
+    taskDetail: TaskDetail
+    scenarioDetail: ScenarioDetail
+    scoreBreakdown: ScoreBreakdown
     
     class Config:
         json_encoders = {

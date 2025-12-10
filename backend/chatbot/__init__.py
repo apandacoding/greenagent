@@ -1,8 +1,8 @@
 """
 Green Agent chatbot package.
 """
-from .agent import GreenAgent
+from .agent import GreenAgent, WhiteAgent
 from .models import ChatMessage, ChatResponse, AgentStatus
-from .tools import FlightTool, AnalysisTool
+from .tools import FlightSearchTool
 
-__all__ = ["GreenAgent", "ChatMessage", "ChatResponse", "AgentStatus", "FlightTool", "AnalysisTool"]
+__all__ = ["GreenAgent", "WhiteAgent", "ChatMessage", "ChatResponse", "AgentStatus", "FlightSearchTool"]
