@@ -8,8 +8,13 @@ from langchain_core.runnables import RunnableLambda
 
 # ---------- Load keys ----------
 load_dotenv()
-YELP_API_KEY = os.environ.get("YELP_API_KEY", "nRFRn8D-CJHcVsYx0q_ilawRWkR1HgCbsv6oVnfPRtfZmuRBLNB2mdm7NY7JlAVEDtmdPqoLtfUkhYuY_EHhOslrwBbpVWZNduLExZUuGm5E5RNuY6bocHJyWMUsaXYx")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "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")
+YELP_API_KEY = os.environ.get("YELP_API_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+if not YELP_API_KEY:
+    raise ValueError("YELP_API_KEY environment variable is not set")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 

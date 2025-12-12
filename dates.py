@@ -8,5 +8,7 @@ import os
 
 # ---------- Setup ----------
 load_dotenv()
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or "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"
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)

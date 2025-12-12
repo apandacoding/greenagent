@@ -15,11 +15,15 @@ logger = logging.getLogger(__name__)
 
 dotenv.load_dotenv()
 
-anthropic_api_key = "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"
-serp_api_key = "cfc3493ca4156d9bd1eba9c59c1f78376cc2e3d4c0b162c23707144f9d5dd041"
-BASE_URL = "https://serpapi.com/search"
+anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+serp_api_key = os.getenv("SERP_API_KEY")
 
-print(anthropic_api_key, serp_api_key, BASE_URL)
+if not anthropic_api_key:
+    raise ValueError("ANTHROPIC_API_KEY environment variable is not set")
+if not serp_api_key:
+    raise ValueError("SERP_API_KEY environment variable is not set")
+
+BASE_URL = "https://serpapi.com/search"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Go up one level from backend/tools/ to backend/, then into functions/

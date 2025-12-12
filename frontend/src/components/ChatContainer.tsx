@@ -37,7 +37,8 @@ export default function ChatContainer() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8001/api/chat/green', {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+      const response = await fetch(`${API_URL}/api/chat/green`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

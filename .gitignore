@@ -24,4 +24,8 @@ Thumbs.db
 *.swp
 *.swo
 
+# Environment variables
+.env
+.env.local
+.env.*.local
 backend/chatbot/.env

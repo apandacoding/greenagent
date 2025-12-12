@@ -55,7 +55,17 @@ export default function GreenAgentChat() {
       if (!isMounted) return;
       
       try {
-        ws = new WebSocket('ws://localhost:8001/ws/green');
+        // Get WebSocket URL, converting HTTPS to WSS if needed
+        let WS_URL = import.meta.env.VITE_WS_URL;
+        if (!WS_URL) {
+          // If using API_URL, convert it to WebSocket URL
+          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+          WS_URL = API_URL.replace('http://', 'ws://').replace('https://', 'wss://');
+        } else {
+          // Ensure WSS for HTTPS URLs
+          WS_URL = WS_URL.replace('https://', 'wss://').replace('http://', 'ws://');
+        }
+        ws = new WebSocket(`${WS_URL}/ws/green`);
         wsRef.current = ws;
 
         ws.onopen = () => {
