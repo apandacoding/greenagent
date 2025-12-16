@@ -1,3 +1,4 @@
+agentbeats>=1.2.0  # AgentBeats SDK with A2A protocol support
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.1
 aiosignal==1.4.0
@@ -122,3 +123,4 @@ websockets==15.0.1
 xxhash==3.6.0
 yarl==1.22.0
 zstandard==0.25.0
+# Note: Using custom agentbeats_controller.py instead of earthshaker (requires Python 3.13)

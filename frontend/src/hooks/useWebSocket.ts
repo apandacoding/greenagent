@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Message } from '../types/chat';
 
-const WS_URL = 'ws://localhost:8000/ws';
+const WS_URL = 'ws://localhost:8003/ws/green';
 
 export default function useWebSocket() {
   const [messages, setMessages] = useState<Message[]>([]);

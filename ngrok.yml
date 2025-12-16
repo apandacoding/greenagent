@@ -1,0 +1,11 @@
+version: "2"
+authtoken: # Set your ngrok authtoken with: ngrok config add-authtoken YOUR_TOKEN
+
+tunnels:
+  green-agent:
+    addr: 8001
+    proto: http
+  white-agent:
+    addr: 8002
+    proto: http
+

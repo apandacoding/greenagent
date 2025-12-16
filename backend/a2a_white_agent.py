@@ -179,8 +179,8 @@ def start_white_agent(host: str = "0.0.0.0", port: int = 8002):
     # Get A2A routes (for JSON-RPC handling)
     a2a_routes = list(a2a_starlette.routes)
     
-    # Create custom routes - these go FIRST to take precedence
-    # Note: POST at /to_agent/{agent_id} is handled by A2A routes for JSON-RPC
+    # Create custom routes for management endpoints
+    # A2A routes handle POST at /to_agent/{agent_id} for JSON-RPC
     custom_routes = [
         Route("/", root_endpoint, methods=["GET", "HEAD"]),
         Route("/status", status_endpoint, methods=["GET"]),
@@ -188,12 +188,12 @@ def start_white_agent(host: str = "0.0.0.0", port: int = 8002):
         Route("/agents/{agent_id}/reset", reset_agent_endpoint, methods=["POST"]),
         Route("/agents/{agent_id}", agent_status_endpoint, methods=["GET"]),
         Route("/.well-known/agent-card.json", well_known_agent_card, methods=["GET"]),
-        Route("/to_agent/{agent_id}", to_agent_endpoint, methods=["GET", "HEAD"]),
+        # Note: /to_agent/{agent_id} GET/HEAD for card info only
         Route("/to_agent/{agent_id}/.well-known/agent-card.json", to_agent_well_known_endpoint, methods=["GET"]),
     ]
     
-    # Combine routes: custom first, then A2A routes
-    all_routes = custom_routes + a2a_routes
+    # Combine routes: A2A routes FIRST (to handle POST for JSON-RPC), then custom routes
+    all_routes = a2a_routes + custom_routes
     
     # Create new Starlette app with combined routes
     middleware = [

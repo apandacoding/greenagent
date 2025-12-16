@@ -1,4 +1,84 @@
-<!-- 0e5776ab-4b58-494e-a440-88e64f1de8a6 8d1ee5ba-b6dd-4ac8-96c5-22461543a976 -->
+---
+name: Fix Duplicate Tool Calls and Expose DataFrame/JSON Operations
+overview: ""
+todos:
+  - id: c281d252-b7c2-4200-a91f-dc36ef342068
+    content: Create fixture system with seeded data for flights, hotels, restaurants, weather
+    status: pending
+  - id: efd73382-961c-47dd-b24e-14facb4ef6fd
+    content: Wrap tools to use fixtures instead of real APIs with strict schemas
+    status: pending
+  - id: 70042f65-4831-43a0-af63-400dc418e556
+    content: Create tool registry with whitelist and minimal args validation
+    status: pending
+  - id: 9aa5b9b6-b310-401d-adb4-a203d0b65ee9
+    content: Implement sandbox with no network, deterministic seed, tool call logging
+    status: pending
+  - id: 6d9b0f88-d001-464c-82e6-ebb54ab04020
+    content: Create plan validator that accepts only JSON, validates structure and tools
+    status: pending
+  - id: 7fd29cca-13d8-44dd-952d-d3bb71c550f9
+    content: Implement safe normalizations (whitespace, dates, arrows, markdown)
+    status: pending
+  - id: dc6e1e19-0e3b-49c1-942c-6dde1ef2f985
+    content: Create deterministic tool runner that executes validated plans
+    status: pending
+  - id: 2eebca5b-7d2c-4bd7-920d-7664ef561d3a
+    content: Implement append-only trace ledger recording all tool calls
+    status: pending
+  - id: 299cbd4e-e190-47d2-b885-e04ed71436ad
+    content: Create schema validation for white agent submissions
+    status: pending
+  - id: bd4df1e9-b4d0-4a7e-9c9b-7297627dff77
+    content: Implement grounding checks for all concrete claims
+    status: pending
+  - id: 17049b56-1b10-4aab-9989-2f5159fad62b
+    content: Create feasibility checker for weather, sold-out, visa constraints
+    status: pending
+  - id: ab420824-2355-4c4b-b926-56beecee8e48
+    content: Implement timing realism checks (overlaps, buffers, daily caps)
+    status: pending
+  - id: d3cbf577-f3e0-47ec-9963-d930a3e482ee
+    content: Create geo-logistics validator for routes and lodging proximity
+    status: pending
+  - id: 019d0f44-abe3-4c4e-8678-aebcc069c357
+    content: Implement personalization checks against traveler brief
+    status: pending
+  - id: c4a6a537-d602-4b51-a851-f9f17bd563a4
+    content: Create budget validator with cost recomputation and comparison
+    status: pending
+  - id: 19720a05-8204-42f7-bd96-1881f6be11a0
+    content: Implement clarity and evidence quality scoring
+    status: pending
+  - id: ef413cbf-61a8-4b02-9c90-80da16320101
+    content: Implement NDCG@K calculation for lodging ranking
+    status: pending
+  - id: eeacf45d-c335-4b15-8bfc-162ad4c0bffa
+    content: Create stability scorer with seeded perturbation testing
+    status: pending
+  - id: e0131f71-0f47-4ebc-9519-fc4c2f1f40c8
+    content: Build scoring orchestrator that coordinates all scoring components
+    status: pending
+  - id: f80da1de-6cfd-4de5-a49b-34d1240143db
+    content: Create seed management system for deterministic execution
+    status: pending
+  - id: c9d92114-7d99-412a-9c1b-7e8eb93205dd
+    content: Implement isolation system with reset and clean state
+    status: pending
+  - id: 7db80edf-c86b-4cb5-bc38-2787c521f2b2
+    content: Create artifact generator for metrics, leaderboard, traces
+    status: pending
+  - id: 5f7ba349-8f18-4692-9356-2db358c09989
+    content: Build test suite with unit tests, fuzz tests, reproducibility tests
+    status: pending
+  - id: 39aecd46-29e9-4e02-9f90-d85d53c154df
+    content: Create main GreenAgent orchestrator coordinating all layers
+    status: pending
+  - id: bd95ac65-e71b-46a1-8685-b89b55c652c8
+    content: Integrate with existing codebase and add backward compatibility
+    status: pending
+---
+
 # Fix Duplicate Tool Calls and Expose DataFrame/JSON Operations
 
 ## Problem Summary
@@ -190,31 +270,3 @@
 ## Estimated Time
 
 Total: 4-5 hours
-
-### To-dos
-
-- [ ] Create fixture system with seeded data for flights, hotels, restaurants, weather
-- [ ] Wrap tools to use fixtures instead of real APIs with strict schemas
-- [ ] Create tool registry with whitelist and minimal args validation
-- [ ] Implement sandbox with no network, deterministic seed, tool call logging
-- [ ] Create plan validator that accepts only JSON, validates structure and tools
-- [ ] Implement safe normalizations (whitespace, dates, arrows, markdown)
-- [ ] Create deterministic tool runner that executes validated plans
-- [ ] Implement append-only trace ledger recording all tool calls
-- [ ] Create schema validation for white agent submissions
-- [ ] Implement grounding checks for all concrete claims
-- [ ] Create feasibility checker for weather, sold-out, visa constraints
-- [ ] Implement timing realism checks (overlaps, buffers, daily caps)
-- [ ] Create geo-logistics validator for routes and lodging proximity
-- [ ] Implement personalization checks against traveler brief
-- [ ] Create budget validator with cost recomputation and comparison
-- [ ] Implement clarity and evidence quality scoring
-- [ ] Implement NDCG@K calculation for lodging ranking
-- [ ] Create stability scorer with seeded perturbation testing
-- [ ] Build scoring orchestrator that coordinates all scoring components
-- [ ] Create seed management system for deterministic execution
-- [ ] Implement isolation system with reset and clean state
-- [ ] Create artifact generator for metrics, leaderboard, traces
-- [ ] Build test suite with unit tests, fuzz tests, reproducibility tests
-- [ ] Create main GreenAgent orchestrator coordinating all layers
-- [ ] Integrate with existing codebase and add backward compatibility

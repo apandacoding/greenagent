@@ -1,0 +1,16 @@
+# Cloudflare Tunnel Configuration Example
+# Copy this file to cloudflare-config.yml and update with your domain
+
+tunnel: green-agent-tunnel
+credentials-file: /Users/aryanpanda/green-agent/.cloudflared/green-agent-tunnel.json
+
+ingress:
+  # White Agent (port 8002)
+  - hostname: white-agent.yourdomain.com  # Replace yourdomain.com with your actual domain
+    service: http://localhost:8002
+  # Green Agent (port 8001)  
+  - hostname: green-agent.yourdomain.com  # Replace yourdomain.com with your actual domain
+    service: http://localhost:8001
+  # Catch-all rule (must be last)
+  - service: http_status:404
+

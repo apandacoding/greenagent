@@ -29,3 +29,7 @@ Thumbs.db
 .env.local
 .env.*.local
 backend/chatbot/.env
+
+# Cloudflare tunnel credentials
+.cloudflared/
+*.cfargotunnel.json

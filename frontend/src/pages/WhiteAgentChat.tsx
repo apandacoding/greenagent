@@ -34,7 +34,7 @@ export default function WhiteAgentChat() {
     setError(null);
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8003';
       const response = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
